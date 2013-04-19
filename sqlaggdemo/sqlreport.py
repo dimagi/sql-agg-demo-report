@@ -12,7 +12,7 @@ from corehq.apps.groups.models import Group
 from dimagi.utils.decorators.memoized import memoized
 from django.conf import settings
 
-No_VALUE = "--"
+NO_VALUE = "--"
 
 
 class Column(object):
@@ -128,6 +128,10 @@ class SqlTabluarReport(GenericTabularReport, CustomProjectReport, ProjectReportP
         raise NotImplementedError()
 
     @property
+    def database(self):
+        return self.domain
+
+    @property
     def fields(self):
         return [cls.__module__ + '.' + cls.__name__
                 for cls in self.field_classes]
@@ -145,10 +149,17 @@ class SqlTabluarReport(GenericTabularReport, CustomProjectReport, ProjectReportP
     def rows(self):
         vc = self.view_context
         for c in self.columns:
-            c.view.apply_vc(vc)
-        engine = sqlalchemy.create_engine(settings.SQL_REPORTING_DATABASE.format("domain"=self.domain))  # "postgresql+psycopg2://postgres:password@localhost/care_benin")
+            if isinstance(c.view, AggregateView):
+                for v in c.view.views:
+                    vc.append_view(v)
+            else:
+                vc.append_view(c.view)
+        engine = sqlalchemy.create_engine(settings.SQL_REPORTING_DATABASE.format(database=self.database))
         conn = engine.connect()
-        vc.resolve(conn, self.filter_values)
+        try:
+            vc.resolve(conn, self.filter_values)
+        finally:
+            conn.close()
 
         """
         TODO: support getting rows out of multi-group data
