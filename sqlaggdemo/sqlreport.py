@@ -56,7 +56,7 @@ class Column(object):
 class AggregateColumn(object):
     def __init__(self, name, aggregate_fn, *args, **kwargs):
         self.aggregate_fn = aggregate_fn
-        self.columns = args
+        self.views = args
         self.name = name
 
         self.group = kwargs.pop('group', None)
@@ -64,7 +64,7 @@ class AggregateColumn(object):
         if self.group:
             self.group.add_column(self.data_tables_column)
 
-        self.view = AggregateView(aggregate_fn, *[c.view for c in self.columns])
+        self.view = AggregateView(aggregate_fn, *self.views)
 
     def get_value(self, report, row, row_key):
         return (self.view.get_value(row) if row else None) or NO_VALUE

@@ -35,17 +35,21 @@ class DemoReport(SqlTabluarReport):
         "date > '{startdate}'",
         "date < '{enddate}'"
     ]
+    # still need to sort out multi-level groupings. Query works fine but probably need a new template / base report
     groupings = ["user"]
     table_name = "user_table"
+    # database can be overridden here but the default is the project domain
     database = "sqlagg-demo"
 
     @property
     def keys(self):
+        # would normally be loaded by couch
         return [["user1"], ["user2"]]
 
     @property
     @memoized
     def usernames_demo(self):
+        # would normally be loaded by couch
         return {"user1": "Joe", "user2": "Bob"}
 
     @property
@@ -62,8 +66,8 @@ class DemoReport(SqlTabluarReport):
         i_b = Column("Indicator B", key="indicator_b")
 
         agg_c_d = AggregateColumn("C/D", combine_indicator,
-                                  Column("", key="indicator_c"),
-                                  Column("", key="indicator_d"))
+                                  SumView("indicator_c"),
+                                  SumView("indicator_d"))
 
         return [
             user,
