@@ -1,102 +1,123 @@
 # coding=utf-8
 import sqlalchemy
-from sqlagg import *
-from sqlagg.views import *
+import sqlagg
 
-from corehq.apps.reports.basic import BasicTabularReport, Column, GenericTabularReport
-from corehq.apps.reports.datatables import DataTablesHeader, DataTablesColumnGroup, \
-    DataTablesColumn, DTSortType, DTSortDirection
-from corehq.apps.reports.standard import ProjectReportParametersMixin, CustomProjectReport, DatespanMixin
-from corehq.apps.reports.fields import DatespanField
-from corehq.apps.groups.models import Group
+from corehq.apps.reports.basic import GenericTabularReport
+from corehq.apps.reports.datatables import DataTablesHeader, \
+    DataTablesColumn, DTSortType
+from corehq.apps.reports.standard import ProjectReportParametersMixin, CustomProjectReport
 from dimagi.utils.decorators.memoized import memoized
 from django.conf import settings
 
-NO_VALUE = "--"
-
 
 class Column(object):
-    def __init__(self, name, calculate_fn=None, view_type=None, *args, **kwargs):
-        view_args = (
-            # args specific to KeyView constructor
-            'key', 'table_name', 'group_by', 'filters'
-        )
-        view_kwargs = {}
+    def __init__(self, header, name, column_type=None, calculate_fn=None, *args, **kwargs):
+        """
+        Args:
+            :param header:
+                The column header.
+            :param name:
+                The name of the column. This must match up to a column name in the report database.
+            :param args:
+                Additional positional arguments will be passed on when creating the DataTablesColumn
+        Kwargs:
+            :param column_type=SumColumn:
+                The type of the column. Must be an instance of sqlagg.columns.BaseColumn.
+            :param header_group=None:
+                An instance of corehq.apps.reports.datatables.DataTablesColumnGroup to which this column header will
+                be added.
+            :param calculate_fn=None:
+                Function to apply to value before display.
+            :param alias=None:
+                The alias to use for the column (optional). Should only contain a-z, A-Z, 0-9 and '_' characters.
+                This is useful if you want to select data from the same table column more than once in a single report.
+                e.g
+                    Column("Count", "col_a", column_type=CountColumn, alias="count_col_a")
+                    Column("Sum", "col_a", column_type=SumColumn, alias="sum_col_a")
+            :param table_name=None:
+                This will override the table name supplied to the QueryContext. See QueryContext.
+            :param group_by=None:
+                This will override the group_by values supplied to the QueryContext. See QueryContext.
+            :param filters=None:
+                This will override the filters supplied to the QueryContext. See QueryContext.
+            :param kwargs:
+                Additional keyword arguments will be passed on when creating the DataTablesColumn
 
-        for arg in view_args:
+        """
+        column_args = (
+            # args specific to BaseColumn constructor
+            'table_name', 'group_by', 'filters', 'alias'
+        )
+        column_kwargs = {}
+
+        for arg in column_args:
             try:
-                view_kwargs[arg] = kwargs.pop(arg)
+                column_kwargs[arg] = kwargs.pop(arg)
             except KeyError:
                 pass
 
-        view_type = view_type or SumView
+        column_type = column_type or sqlagg.SumColumn
+        if 'sort_type' not in kwargs:
+            kwargs['sort_type'] = DTSortType.NUMERIC
+            kwargs['sortable'] = True
 
-        if 'key' in view_kwargs:
-            if 'sort_type' not in kwargs:
-                kwargs['sort_type'] = DTSortType.NUMERIC
-                kwargs['sortable'] = True
-
-            key = view_kwargs.pop('key')
-            self.view = view_type(key, **view_kwargs)
+        self.view = column_type(name, **column_kwargs)
 
         self.calculate_fn = calculate_fn
-        self.group = kwargs.pop('group', None)
+        self.header_group = kwargs.pop('header_group', None)
 
-        self.data_tables_column = DataTablesColumn(name, *args, **kwargs)
-        if self.group:
-            self.group.add_column(self.data_tables_column)
+        self.data_tables_column = DataTablesColumn(header, *args, **kwargs)
+        if self.header_group:
+            self.header_group.add_column(self.data_tables_column)
 
-    def get_value(self, report, row, row_key):
-        if isinstance(self.view, SimpleView):
-            return self.calculate_fn(report, row_key) if self.calculate_fn else row_key
+    def get_value(self, report, row):
+        value = self.view.get_value(row) if row else None
+        if self.calculate_fn and value:
+            return self.calculate_fn(report, value)
         else:
-            return (self.view.get_value(row) if row else None) or NO_VALUE
+            return value
 
 
 class AggregateColumn(object):
-    def __init__(self, name, aggregate_fn, *args, **kwargs):
+    """
+    Allows combining the values from multiple columns into a single value.
+    """
+    def __init__(self, header, aggregate_fn, *columns, **kwargs):
+        """
+        Args:
+            :param header:
+                The column header.
+            :param aggregate_fn:
+                The function used to aggregate the individual values into a single value.
+            :param columns:
+                List of columns (instances of sqlagg.BaseColumn).
+        """
         self.aggregate_fn = aggregate_fn
-        self.views = args
-        self.name = name
 
-        self.group = kwargs.pop('group', None)
-        self.data_tables_column = DataTablesColumn(name, **kwargs)
-        if self.group:
-            self.group.add_column(self.data_tables_column)
+        self.header_group = kwargs.pop('header_group', None)
+        self.data_tables_column = DataTablesColumn(header, **kwargs)
+        if self.header_group:
+            self.header_group.add_column(self.data_tables_column)
 
-        self.view = AggregateView(aggregate_fn, *self.views)
+        self.view = sqlagg.AggregateColumn(aggregate_fn, *columns)
 
-    def get_value(self, report, row, row_key):
-        return (self.view.get_value(row) if row else None) or NO_VALUE
+    def get_value(self, report, row):
+        return self.view.get_value(row) if row else None
 
 
-class AggregateView(object):
-    def __init__(self, aggregate_fn, *views):
-        self.aggregate_fn = aggregate_fn
-        self.views = views
-
-    def get_value(self, row):
-        return self.aggregate_fn(*[v.get_value(row) for v in self.views])
-
-    def apply_vc(self, view_context):
-        for view in self.views:
-            view.apply_vc(view_context)
-
-
-class SqlTabluarReport(GenericTabularReport, CustomProjectReport, ProjectReportParametersMixin, DatespanMixin):
-    field_classes = (DatespanField,)
-    datespan_default_days = 30
+class SqlTabularReport(GenericTabularReport, CustomProjectReport, ProjectReportParametersMixin):
     exportable = True
+    no_value = '--'
 
     @property
     def columns(self):
         """
-        Returns a list of Columns
+        Returns a list of Column objects
         """
         raise NotImplementedError()
 
     @property
-    def groupings(self):
+    def group_by(self):
         """
         Returns a list of 'group by' column names
         """
@@ -105,7 +126,7 @@ class SqlTabluarReport(GenericTabularReport, CustomProjectReport, ProjectReportP
     @property
     def filters(self):
         """
-        Returns a list of filter statements e.g. ["date > '{enddate}'"]
+        Returns a list of filter statements e.g. ["date > :enddate"]
         """
         raise NotImplementedError()
 
@@ -119,17 +140,14 @@ class SqlTabluarReport(GenericTabularReport, CustomProjectReport, ProjectReportP
     @property
     def keys(self):
         """
-        The list of report keys (e.g. users) or None to just display all the data returned from the query
+        The list of report keys (e.g. users) or None to just display all the data returned from the query. Each value
+        in this list should be a list of the same dimension as the 'group_by' list.
+
+        e.g.
+            group_by = ['region', 'sub_region']
+            keys = [['region1', 'sub1'], ['region1', 'sub2'] ... ]
         """
         raise NotImplementedError()
-
-    @property
-    def columns(self):
-        raise NotImplementedError()
-
-    @property
-    def database(self):
-        return self.domain
 
     @property
     def fields(self):
@@ -142,41 +160,40 @@ class SqlTabluarReport(GenericTabularReport, CustomProjectReport, ProjectReportP
 
     @property
     @memoized
-    def view_context(self):
-        return ViewContext(self.table_name, self.filters, self.groupings)
+    def query_context(self):
+        return sqlagg.QueryContext(self.table_name, self.filters, self.group_by)
 
     @property
     def rows(self):
-        vc = self.view_context
+        qc = self.query_context
         for c in self.columns:
-            if isinstance(c.view, AggregateView):
-                for v in c.view.views:
-                    vc.append_view(v)
-            else:
-                vc.append_view(c.view)
-        engine = sqlalchemy.create_engine(settings.SQL_REPORTING_DATABASE.format(database=self.database))
+            qc.append_column(c.view)
+        engine = sqlalchemy.create_engine(settings.SQL_REPORTING_DATABASE)
         conn = engine.connect()
         try:
-            vc.resolve(conn, self.filter_values)
+            data = qc.resolve(conn, self.filter_values)
         finally:
             conn.close()
 
-        """
-        TODO: support getting rows out of multi-group data
-        e.g.
-        {
-            "provinceA": {
-                "district1": {
-                    "col1": val1,
-                    "col2": val2
-                }
-            }
-        }
-        """
         if self.keys:
             for key_group in self.keys:
-                for key in key_group:
-                    yield [c.get_value(self, vc.data.get(key, None), key) for c in self.columns]
+                row_key = self._row_key(key_group)
+                row = data.get(row_key, None) if row_key else data
+                if not row:
+                    row = dict(zip(self.group_by, key_group))
+                yield [self._or_no_value(c.get_value(self, row)) for c in self.columns]
         else:
-            for k, v in vc.data.items():
-                yield [c.get_value(self, vc.data.get(k), k) for c in self.columns]
+            if self.group_by:
+                for k, v in data.items():
+                    yield [self._or_no_value(c.get_value(self, data.get(k))) for c in self.columns]
+            else:
+                yield [self._or_no_value(c.get_value(self, data)) for c in self.columns]
+
+    def _row_key(self, key_group):
+        if len(self.group_by) == 1:
+            return key_group[0]
+        elif len(self.group_by) > 1:
+            return tuple(key_group)
+
+    def _or_no_value(self, value):
+        return value if value is not None else self.no_value

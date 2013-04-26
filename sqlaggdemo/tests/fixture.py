@@ -1,11 +1,11 @@
 import sqlalchemy
 from sqlalchemy import *
-from sqlalchemy.orm import *
 from django.conf import settings
+from sqlalchemy.engine.url import make_url
 
 metadata = sqlalchemy.MetaData()
 
-user_table = Table("user_table",
+user_table = Table("user_report_data",
                    metadata,
                    Column("user", String(50), primary_key=True, autoincrement=False),
                    Column("date", DATE, primary_key=True, autoincrement=False),
@@ -15,7 +15,7 @@ user_table = Table("user_table",
                    Column("indicator_d", INT)
 )
 
-region_table = Table("region_table",
+region_table = Table("region_report_data",
                      metadata,
                      Column("region", String(50), primary_key=True, autoincrement=False),
                      Column("sub_region", String(50), primary_key=True, autoincrement=False),
@@ -25,8 +25,8 @@ region_table = Table("region_table",
 )
 
 
-def main():
-    engine = create_engine("postgresql+psycopg2://postgres:password@localhost/{domain}".format(domain="sqlagg-demo"))
+def load_data():
+    engine = create_engine(make_url(settings.SQL_REPORTING_DATABASE))
     metadata.bind = engine
     user_table.drop(engine, checkfirst=True)
     region_table.drop(engine, checkfirst=True)
@@ -41,14 +41,17 @@ def main():
 
     region_data = [
         {"region": "region1", "sub_region": "region1_a", "date": "2013-01-01", "indicator_a": 1, "indicator_b": 0},
-        {"region": "region1", "sub_region": "region1_b", "date": "2013-01-01", "indicator_a": 0, "indicator_b": 1},
         {"region": "region1", "sub_region": "region1_a", "date": "2013-02-01", "indicator_a": 1, "indicator_b": 1},
+
+        {"region": "region1", "sub_region": "region1_b", "date": "2013-01-01", "indicator_a": 0, "indicator_b": 1},
         {"region": "region1", "sub_region": "region1_b", "date": "2013-02-01", "indicator_a": 0, "indicator_b": 0},
+
         {"region": "region2", "sub_region": "region2_a", "date": "2013-01-01", "indicator_a": 0, "indicator_b": 1},
-        {"region": "region2", "sub_region": "region2_b", "date": "2013-01-01", "indicator_a": 1, "indicator_b": 0},
         {"region": "region2", "sub_region": "region2_a", "date": "2013-02-01", "indicator_a": 1, "indicator_b": 1},
+
+        {"region": "region2", "sub_region": "region2_b", "date": "2013-01-01", "indicator_a": 1, "indicator_b": 0},
         {"region": "region2", "sub_region": "region2_b", "date": "2013-02-01", "indicator_a": 0, "indicator_b": 0},
-    ]
+        ]
 
     connection = engine.connect()
     try:
@@ -63,6 +66,3 @@ def main():
             connection.execute(insert)
     finally:
         connection.close()
-
-if __name__ == "__main__":
-    main()
